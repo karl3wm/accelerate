@@ -90,7 +90,7 @@ def init_empty_weights(include_buffers: bool = None):
 
 
 @contextmanager
-def init_on_device(device: torch.device, include_buffers: bool = None):
+def init_on_device(device: torch.device, include_buffers: bool = None, tensor_constructors_to_patch: List[str] = []):
     """
     A context manager under which models are initialized with all parameters on the specified device.
 
@@ -98,7 +98,10 @@ def init_on_device(device: torch.device, include_buffers: bool = None):
         device (`torch.device`):
             Device to initialize all parameters on.
         include_buffers (`bool`, *optional*):
-            Whether or not to also put all buffers on the meta device while initializing.
+            Whether or not to simply put all tensors on the device.
+        tensor_constructors_to_patch (`Dict[str]`, *optional*):
+            A manual list of tensor constructors to place on the device, such as ["empty", "zeros", "ones", "full"].
+            Each entry must be a torch module member and accept a device argument.
 
     Example:
 
@@ -119,8 +122,8 @@ def init_on_device(device: torch.device, include_buffers: bool = None):
         return
 
     old_register_parameter = nn.Module.register_parameter
-    if include_buffers:
-        old_register_buffer = nn.Module.register_buffer
+    #if include_buffers:
+    #    old_register_buffer = nn.Module.register_buffer
 
     def register_empty_parameter(module, name, param):
         old_register_parameter(module, name, param)
@@ -136,13 +139,10 @@ def init_on_device(device: torch.device, include_buffers: bool = None):
             module._buffers[name] = module._buffers[name].to(device)
 
     # Patch tensor creation
-    if include_buffers:
-        tensor_constructors_to_patch = {
-            torch_function_name: getattr(torch, torch_function_name)
-            for torch_function_name in ["empty", "zeros", "ones", "full"]
-        }
-    else:
-        tensor_constructors_to_patch = {}
+    tensor_constructors_to_patch = {
+        torch_function_name: getattr(torch, torch_function_name)
+        for torch_function_name in tensor_constructors_to_patch
+    }
 
     def patch_tensor_constructor(fn):
         def wrapper(*args, **kwargs):
@@ -153,15 +153,15 @@ def init_on_device(device: torch.device, include_buffers: bool = None):
 
     try:
         nn.Module.register_parameter = register_empty_parameter
-        if include_buffers:
-            nn.Module.register_buffer = register_empty_buffer
+        #if include_buffers:
+        #    nn.Module.register_buffer = register_empty_buffer
         for torch_function_name in tensor_constructors_to_patch.keys():
             setattr(torch, torch_function_name, patch_tensor_constructor(getattr(torch, torch_function_name)))
         yield
     finally:
         nn.Module.register_parameter = old_register_parameter
-        if include_buffers:
-            nn.Module.register_buffer = old_register_buffer
+        #if include_buffers:
+        #    nn.Module.register_buffer = old_register_buffer
         for torch_function_name, old_torch_function in tensor_constructors_to_patch.items():
             setattr(torch, torch_function_name, old_torch_function)
 
